@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Rainer James Palmiano's Digital Twin",
+  title: "Rain's Digital Twin",
   description: "AI Career Twin representing Rainer James Palmiano",
 };
 
