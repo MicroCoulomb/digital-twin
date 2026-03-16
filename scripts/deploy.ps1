@@ -29,7 +29,18 @@ Set-Location ..
 
 # 2. Terraform workspace & apply
 Set-Location terraform
-Invoke-ExternalCommand "terraform" @("init", "-input=false")
+$awsAccountId = aws sts get-caller-identity --query Account --output text
+if ($LASTEXITCODE -ne 0) { throw "Failed to resolve AWS account ID" }
+$awsRegion = if ($env:DEFAULT_AWS_REGION) { $env:DEFAULT_AWS_REGION } else { "us-east-1" }
+Invoke-ExternalCommand "terraform" @(
+    "init",
+    "-input=false",
+    "-backend-config=bucket=twin-terraform-state-$awsAccountId",
+    "-backend-config=key=$Environment/terraform.tfstate",
+    "-backend-config=region=$awsRegion",
+    "-backend-config=dynamodb_table=twin-terraform-locks",
+    "-backend-config=encrypt=true"
+)
 
 if (-not (terraform workspace list | Select-String $Environment)) {
     Invoke-ExternalCommand "terraform" @("workspace", "new", $Environment)
