@@ -1,6 +1,5 @@
 import json
 import os
-from urllib import parse, request
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -12,6 +11,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from openai import OpenAI, OpenAIError
 from pydantic import BaseModel
+import requests
 
 from context import prompt
 
@@ -132,30 +132,39 @@ def get_memory_path(session_id: str) -> str:
 
 
 def push(message: str):
-    payload = json.dumps(
-        {
-            "content": message,
-            "username": "Digital Twin Chatbot",
-        }
-    ).encode("utf-8")
-    webhook_request = request.Request(
-        DISCORD_WEBHOOK_URL,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with request.urlopen(webhook_request, timeout=10) as response:
-        response.read()
+    if not DISCORD_WEBHOOK_URL:
+        return {"sent": False, "reason": "webhook_not_configured"}
+
+    try:
+        response = requests.post(
+            DISCORD_WEBHOOK_URL,
+            json={
+                "content": message,
+                "username": "Digital Twin Chatbot",
+            },
+            timeout=60,
+        )
+        if response.ok:
+            return {"sent": True}
+
+        print(f"Discord webhook HTTP error: {response.status_code} {response.text}")
+        return {"sent": False, "reason": f"http_{response.status_code}"}
+    except requests.RequestException as exc:
+        print(f"Discord webhook request error: {exc}")
+        return {"sent": False, "reason": "request_error"}
+    except Exception as exc:
+        print(f"Discord webhook unexpected error: {exc}")
+        return {"sent": False, "reason": "unexpected_error"}
 
 
 def record_user_details(email: str, name: str = "Name not provided", notes: str = "not provided"):
-    push(f"Recording: {name} with email {email} and notes {notes}")
-    return {"recorded": "ok"}
+    push_result = push(f"Recording: {name} with email {email} and notes {notes}")
+    return {"recorded": "ok", "discord": push_result}
 
 
 def record_unknown_question(question: str):
-    push(f"Recording: {question}")
-    return {"recorded": "ok"}
+    push_result = push(f"Recording: {question}")
+    return {"recorded": "ok", "discord": push_result}
 
 
 def call_tool(tool_name: str, arguments: Dict) -> Dict:
