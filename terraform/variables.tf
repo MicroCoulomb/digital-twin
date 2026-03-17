@@ -45,6 +45,13 @@ variable "openai_model" {
   default     = "gpt-4.1-mini"
 }
 
+variable "discord_webhook_url" {
+  description = "Discord webhook URL for tool-based lead and unknown-question notifications"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "lambda_timeout" {
   description = "Lambda function timeout in seconds"
   type        = number

@@ -1,5 +1,6 @@
 import json
 import os
+from urllib import parse, request
 import uuid
 from datetime import datetime
 from typing import Dict, List, Optional
@@ -35,6 +36,7 @@ OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 BEDROCK_MODEL_ID = os.getenv("BEDROCK_MODEL_ID", "global.amazon.nova-2-lite-v1:0")
 DEFAULT_AWS_REGION = os.getenv("DEFAULT_AWS_REGION", "us-east-1")
+DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 
 openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
 bedrock_client = None
@@ -47,7 +49,6 @@ MEMORY_DIR = os.getenv("MEMORY_DIR", "../memory")
 # Initialize S3 client if needed
 if USE_S3:
     s3_client = boto3.client("s3")
-
 
 class ChatRequest(BaseModel):
     message: str
@@ -63,6 +64,51 @@ class Message(BaseModel):
     role: str
     content: str
     timestamp: str
+
+
+record_user_details_tool = {
+    "type": "function",
+    "name": "record_user_details",
+    "description": "Use this tool to record that a user is interested in being in touch and provided an email address.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "email": {
+                "type": "string",
+                "description": "The email address of this user.",
+            },
+            "name": {
+                "type": "string",
+                "description": "The user's name, if they provided it.",
+            },
+            "notes": {
+                "type": "string",
+                "description": "Any additional information about the conversation that's worth recording to give context.",
+            },
+        },
+        "required": ["email"],
+        "additionalProperties": False,
+    },
+}
+
+record_unknown_question_tool = {
+    "type": "function",
+    "name": "record_unknown_question",
+    "description": "Always use this tool to record any question that couldn't be answered because the answer was not known.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "question": {
+                "type": "string",
+                "description": "The question that couldn't be answered.",
+            }
+        },
+        "required": ["question"],
+        "additionalProperties": False,
+    },
+}
+
+openai_tools = [record_user_details_tool, record_unknown_question_tool]
 
 
 def get_active_model() -> str:
@@ -83,6 +129,40 @@ def get_bedrock_client():
 
 def get_memory_path(session_id: str) -> str:
     return f"{session_id}.json"
+
+
+def push(message: str):
+    payload = json.dumps(
+        {
+            "content": message,
+            "username": "Digital Twin Chatbot",
+        }
+    ).encode("utf-8")
+    webhook_request = request.Request(
+        DISCORD_WEBHOOK_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with request.urlopen(webhook_request, timeout=10) as response:
+        response.read()
+
+
+def record_user_details(email: str, name: str = "Name not provided", notes: str = "not provided"):
+    push(f"Recording: {name} with email {email} and notes {notes}")
+    return {"recorded": "ok"}
+
+
+def record_unknown_question(question: str):
+    push(f"Recording: {question}")
+    return {"recorded": "ok"}
+
+
+def call_tool(tool_name: str, arguments: Dict) -> Dict:
+    tool = globals().get(tool_name)
+    if tool is None:
+        return {"error": f"Unknown tool '{tool_name}'"}
+    return tool(**arguments)
 
 
 def load_conversation(session_id: str) -> List[Dict]:
@@ -152,14 +232,47 @@ def call_openai(conversation: List[Dict], user_message: str) -> str:
         )
 
     try:
+        input_items = build_openai_input(conversation, user_message)
         response = openai_client.responses.create(
             model=OPENAI_MODEL,
             instructions=prompt(),
-            input=build_openai_input(conversation, user_message),
+            input=input_items,
+            tools=openai_tools,
             max_output_tokens=2000,
             temperature=0.7,
             top_p=0.9,
         )
+
+        while True:
+            tool_outputs = []
+            for tool_call in response.output:
+                if tool_call.type != "function_call":
+                    continue
+
+                tool_name = tool_call.name
+                tool_args = json.loads(tool_call.arguments)
+                print(f"Tool called: {tool_name}")
+                result = call_tool(tool_name, tool_args)
+                tool_outputs.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": tool_call.call_id,
+                        "output": json.dumps(result),
+                    }
+                )
+
+            if not tool_outputs:
+                break
+
+            response = openai_client.responses.create(
+                model=OPENAI_MODEL,
+                previous_response_id=response.id,
+                input=tool_outputs,
+                tools=openai_tools,
+                max_output_tokens=2000,
+                temperature=0.7,
+                top_p=0.9,
+            )
     except OpenAIError as exc:
         print(f"OpenAI error: {exc}")
         raise HTTPException(status_code=502, detail=f"OpenAI error: {str(exc)}") from exc

@@ -140,6 +140,7 @@ resource "aws_lambda_function" "api" {
       USE_S3           = "true"
       OPENAI_API_KEY   = var.openai_api_key
       OPENAI_MODEL     = var.openai_model
+      DISCORD_WEBHOOK_URL = var.discord_webhook_url
       BEDROCK_MODEL_ID = var.bedrock_model_id
     }
   }
