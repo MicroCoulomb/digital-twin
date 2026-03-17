@@ -2,6 +2,7 @@
 *.tfstate
 *.tfstate.*
 *.tfvars
+!prod.tfvars
 .terraform/
 .terraform.lock.hcl
 terraform.tfstate.d/
